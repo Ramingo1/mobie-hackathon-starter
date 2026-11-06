@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { createAuth, equalSecret } from './auth.js';
 import { createMobieClient } from './mobie.js';
 import { createMapboxClient } from './mapbox.js';
+import { createAustrianAddressMatcher } from './austrian-addresses.js';
 import { HttpError } from './http.js';
 import { loadConfig } from './config.js';
 
@@ -30,7 +31,8 @@ async function readJson(req) {
 export function createServer(config, services = {}) {
   const auth = services.auth ?? createAuth(config);
   const mobie = services.mobie ?? createMobieClient({ baseUrl: config.baseUrl, getAccessToken: auth.getAccessToken });
-  const mapbox = services.mapbox ?? createMapboxClient({ token: config.mapboxToken });
+  const addressMatcher = services.addressMatcher ?? createAustrianAddressMatcher();
+  const mapbox = services.mapbox ?? createMapboxClient({ token: config.mapboxToken, addressMatcher });
   const secureCookie = new URL(config.redirectUri).protocol === 'https:' ? '; Secure' : '';
   const cookie = (state, maxAge) => `mobie_oauth_state=${state}; Path=/callback; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secureCookie}`;
 
@@ -106,3 +108,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     process.exitCode = 1;
   }
 }
+

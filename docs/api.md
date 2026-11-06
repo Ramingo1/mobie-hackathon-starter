@@ -169,7 +169,7 @@ These run on **your server**, not on mobie. Use `Authorization: Bearer <STARTER_
 | `GET /api/status` | Login state and access-token expiry; never the tokens |
 | `POST /api/logout` | Clears this process's login |
 | `GET /api/me` | Proxies mobie `/me` |
-| `POST /api/locations/search` | `{ "query": "Stephansplatz 1, Wien" }`; returns `{ "candidates": [...], "attribution": "..." }` |
+| `POST /api/locations/search` | `{ "query": "Stephansplatz 1, 1010 Wien" }`; returns `{ "candidates": [...], "attribution": "..." }` |
 | `POST /api/rides/search` | Same basic location/time/seat payload as mobie |
 | `POST /api/rides/{rideId}/join-detailed` | Same basic payload **plus `confirmed: true`** |
 | `GET /api/rides/{rideId}` | Proxies driver-only details |
@@ -177,10 +177,13 @@ These run on **your server**, not on mobie. Use `Authorization: Bearer <STARTER_
 
 The `confirmed` boolean must reflect actual spoken consent; setting it automatically defeats its purpose. This starter does not prove consent cryptographically or persist call state. No automatic retries are performed for writes.
 
-The starter only forwards its explicitly listed routes and fields, not arbitrary URLs or administrative APIs. Request bodies are limited to 16 KiB. Its own errors use `{ "error": "..." }` (400 invalid payload/consent, 401 missing key/login, 404 route, 413 size, 415 content type, 502 upstream network/JSON issue, 503 missing Mapbox token). A timeout may have an unknown write outcome.
+Location search fuzzy-matches a street name against the Austrian street directory when the query includes its city or town (and postal code when known), then returns coordinates from geocode.at's Austrian Address Register data. It tolerates punctuation commonly introduced by speech recognition. If a street matches but the requested house number is not registered, it may return up to three nearby registered numbers; these are suggestions and must be confirmed with the caller. It does not require Mapbox credentials, pass unmatched raw queries to a geocoder, or invent coordinates. If there is no high-confidence match, it returns no candidates so the caller can clarify the address. Responses include source attribution. Ask the caller to confirm a returned address when the match changes the spoken street name or house number, or when several candidates are returned.
+
+The starter only forwards its explicitly listed routes and fields, not arbitrary URLs or administrative APIs. Request bodies are limited to 16 KiB. Its own errors use `{ "error": "..." }` (400 invalid payload/consent, 401 missing key/login, 404 route, 413 size, 415 content type, 502 upstream network/JSON issue, 503 missing Mapbox token only when using the optional Mapbox integration). A timeout may have an unknown write outcome.
 
 ## First requests
 
 Import [postman_collection.json](postman_collection.json), set `starter_url` and your local `starter_api_key`, log in through the browser, then run the requests manually. Set `ride_time` to a real future timestamp and `ride_id` to the selected `ride.id` from your search. The booking request defaults to `confirmed: false`; change it only after consent.
 
 The collection is designed for the starter so tokens refresh automatically. To call mobie directly, use the backend paths and Auth0 access token described at the top of this page.
+

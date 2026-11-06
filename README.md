@@ -1,6 +1,6 @@
 # mobie Hackathon Starter
 
-Build a German-speaking phone assistant that finds rides and sends real booking requests through the **mobie staging REST API**. Use the AI phone platform of your choice and Mapbox or another geocoding or point-of-interest (POI) search service. An Austrian street-name matcher is an optional extension.
+Build a German-speaking phone assistant that finds rides and sends real booking requests through the **mobie staging REST API**. Use the AI phone platform of your choice with the included Austrian Address Register lookup or another suitable geocoding or point-of-interest (POI) search service.
 
 This starter provides Auth0 login with PKCE, automatic token renewal, a small REST client and a server your phone assistant can call. It uses **Node.js built-ins only**, with no runtime dependencies.
 
@@ -21,7 +21,7 @@ npm install
 npm run setup
 ```
 
-1. Fill in `.env`: `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID` and `AUTH0_AUDIENCE`. Add your own `MAPBOX_ACCESS_TOKEN` if using the included geocoding implementation; configure other location services in your own integration. `npm run setup` creates a random `STARTER_API_KEY` and does not overwrite an existing `.env`.
+1. Fill in `.env`: `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID` and `AUTH0_AUDIENCE`. The included Austrian address lookup does not require a Mapbox token. `npm run setup` creates a random `STARTER_API_KEY` and does not overwrite an existing `.env`.
 2. Run `npm run dev` and open **http://localhost:3000**. Use this exact hostname if your callback is `http://localhost:3000/callback`.
 3. Enter your `STARTER_API_KEY`, click **Sign in with Auth0**, and log in with the staging **passenger** account.
 4. After returning, enter the team key again and click **Check API connection**. This calls `GET /me` and verifies access to the actual mobie API.
@@ -48,7 +48,7 @@ Expose the running starter through an HTTPS tunnel or deploy one instance per te
 
 | Method | Starter endpoint | Purpose |
 | --- | --- | --- |
-| POST | `/api/locations/search` | Resolve an address with your Mapbox account |
+| POST | `/api/locations/search` | Match Austrian street names to the address register and return its official coordinates |
 | POST | `/api/rides/search` | Send exact start/destination coordinates to mobie |
 | POST | `/api/rides/{rideId}/join-detailed` | Submit a booking request **after consent** |
 | GET | `/api/me` | Verify the authenticated staging account |
@@ -63,11 +63,13 @@ For booking, repeat the searched locations, time and seat count and add **`"conf
 
 For a local tunnel you can keep the OAuth callback on `localhost`: login in the local browser, and use the tunnel only for phone integrations. For a hosted server set `HOST=0.0.0.0`, terminate HTTPS at the host, and register/set the exact public `AUTH0_REDIRECT_URI` ending in `/callback`. The login page also requires the team key.
 
-## Mapbox, alternative location services and POI search
+## Austrian addresses, alternative location services and POI search
 
-Mapbox is an example integration, not a requirement. You may use other geocoding services, POI search APIs or suitable location datasets to resolve addresses, landmarks, stations and other places. Bring your own provider credentials where required. Adapt `src/mapbox.js` or resolve locations in your own service, then send numeric `longitude` and `latitude` values to mobie. Your chosen data source must permit storing the resulting location data in mobie.
+The included lookup uses geocode.at, which serves street and coordinate data based on the Austrian Address Register. It checks a supplied Austrian city and street against the register and returns the register's coordinates directly. It does not fall back to raw text geocoding or guess coordinates. Give the assistant a full street address and city or postcode; when the register cannot confidently match it, ask the caller to repeat or clarify it. Keep the returned attribution when displaying results. The lookup does not provide POI search.
 
-The sample uses **Geocoding v6 with `permanent=true`**, since mobie persists locations even during ride search. Your Mapbox account needs the prerequisites for permanent geocoding (a valid payment card or an eligible enterprise agreement); calls can incur costs. The example searches addresses, streets and places in Austria in German. It does **not** provide POI search.
+Mapbox remains an optional example for a customized integration. You may use other geocoding services, POI search APIs or suitable location datasets to resolve addresses, landmarks, stations and other places. Bring your own provider credentials where required. Adapt `src/mapbox.js` or resolve locations in your own service, then send numeric `longitude` and `latitude` values to mobie. Your chosen data source must permit storing the resulting location data in mobie.
+
+The lookup needs a town or city in the query to disambiguate identical street names. It can use a postcode as an additional narrowing hint. It does **not** provide POI search.
 
 For POIs, extend the client using an appropriately licensed dataset/service. Mapbox Search Box results are temporary-use by default; do not assume they may be stored in mobie without the required agreement. Preserve attribution in any UI displaying results.
 
@@ -99,3 +101,4 @@ npm start
 | `examples/search.js` | First real staging search |
 
 Keep `.env`, credentials, call transcripts and personal test data out of commits. Only staging is intended; the config rejects the known production API origin. This is a single-team hackathon starter, not a production identity/booking gateway.
+
