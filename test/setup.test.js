@@ -11,7 +11,11 @@ const secret = 'organizer-team-secret-at-least-32-characters';
 
 test('configuration requires team credentials and rejects production/invalid origins without identity-provider settings', () => {
   const env = { STARTER_API_KEY: key, VOICE_INTEGRATION_SECRET: secret };
-  assert.deepEqual(loadConfig(env), { baseUrl: 'https://api-staging.mobie.at', apiKey: key, secret, mapboxToken: '', port: 3000, host: '127.0.0.1' });
+  assert.deepEqual(loadConfig(env), { baseUrl: 'https://api-staging.mobie.at', apiKey: key, secret, mapboxToken: '', photonUrl: 'https://photon.komoot.io/api/', port: 3000, host: '127.0.0.1' });
+  assert.equal(loadConfig({ ...env, PHOTON_URL: 'https://places.example/api/' }).photonUrl, 'https://places.example/api/');
+  for (const PHOTON_URL of ['http://places.example/api/', 'https://user:secret@places.example/api/', 'https://places.example/api/?key=secret']) {
+    assert.throws(() => loadConfig({ ...env, PHOTON_URL }));
+  }
   for (const changes of [{ VOICE_INTEGRATION_SECRET: '' }, { VOICE_INTEGRATION_SECRET: 'short' }, { VOICE_INTEGRATION_SECRET: 'x'.repeat(32) + '\nheader' }, { STARTER_API_KEY: 'short' }, { MOBIE_API_URL: 'https://api.mobie.at' }, { MOBIE_API_URL: 'http://staging.example' }, { MOBIE_API_URL: 'https://staging.example/integrations/voice' }, { MOBIE_API_URL: 'https://user:password@staging.example' }, { PORT: '0' }]) assert.throws(() => loadConfig({ ...env, ...changes }));
 });
 

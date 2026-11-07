@@ -26,7 +26,7 @@ Writes additionally require `Idempotency-Key: <stable confirmed action ID>` and
 | --- | --- | --- |
 | GET | `/health` | Public process health; no upstream request |
 | GET | `/api/caller` | `/integrations/voice/caller`: `userId`, `firstName`, `savedPlaces` |
-| POST | `/api/locations/search` | Local Austrian Address Register lookup (no Mapbox token): `{ "query": "Stephansplatz 1, Wien" }`; only local key required |
+| POST | `/api/locations/search` | Austrian Address Register for streets; Photon/OSM for named buildings and landmarks, e.g. `{ "query": "Altes Rathaus, Linz" }`; only local key required |
 | POST | `/api/rides/nearby` | `/integrations/voice/rides/nearby`: `{ "departure": { ...resolved location... } }` |
 | POST | `/api/rides/search` | `/integrations/voice/rides/search`: resolved locations, time, seats |
 | POST | `/api/rides/{rideId}/join-detailed` | `/integrations/voice/rides/{rideId}/join-detailed`: searched trip plus confirmation; pending driver approval |
@@ -37,6 +37,31 @@ Writes additionally require `Idempotency-Key: <stable confirmed action ID>` and
 | GET | `/api/rides/{rideId}/rider-detail` | `/integrations/voice/rides/{rideId}/rider-detail`: requires driver approval |
 | POST | `/api/ride-requests/{requestId}/withdraw` | `/integrations/voice/ride-requests/{requestId}/withdraw`: `{ "confirmed": true }` |
 | POST | `/api/rides/{rideId}/bookings/{bookingId}/cancel` | `/integrations/voice/rides/{rideId}/bookings/{bookingId}/cancel`: `{ "confirmed": true }` |
+
+### Named buildings and landmarks
+
+Send one place name plus its town, separated by a comma or `in`, for example
+`Altes Rathaus, 4020 Linz`. The existing location tool returns up to three
+`point-of-interest` candidates with real coordinates and `requiresConfirmation`.
+Only Austrian results in the requested town (and postcode when supplied) survive
+filtering. Nearby duplicate building/information-point entries are consolidated.
+Street searches retain the Austrian register and its house-number behavior.
+
+Read the returned place name and address to the caller and get confirmation.
+Missing street or house number remains null (`addressComplete: false`); do not
+invent one. `entranceVerified: false` means the location is a mapped feature,
+not a verified vehicle-accessible entrance or pickup bay. Clarify a suitable
+meeting point when needed. No matches and provider failures are different states.
+
+The default is the [Photon demo API](https://github.com/komoot/photon#demo-server),
+permitted for modest project use without availability guarantees. Queries are
+serialized at at most one per second per starter process and cached for 15 minutes
+(up to 200 entries, including concurrent request deduplication). Only the place
+name and town are sent, without caller identity or credentials. Preserve/display
+the returned OpenStreetMap attribution with results. For higher traffic or multiple
+instances use a private/hosted Photon endpoint through `PHOTON_URL` (HTTPS).
+No public Nominatim API is used. Data is from OpenStreetMap contributors under
+[ODbL](https://www.openstreetmap.org/copyright).
 
 The starter's public root page and `/page.js` provide a manual connection test.
 All `/api/...` routes require the local key. Only listed routes are proxied;

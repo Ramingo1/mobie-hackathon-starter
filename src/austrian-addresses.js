@@ -38,7 +38,7 @@ function coordinates(longitude, latitude) {
     ? { longitude: lng, latitude: lat } : null;
 }
 
-function parseAddress(query) {
+export function parseAddress(query) {
   const parts = query.split(',').map(part => part.trim()).filter(Boolean);
   let address = '';
   let context = '';
@@ -302,4 +302,3 @@ export function createAustrianAddressMatcher({ fetch = globalThis.fetch } = {}) 
     },
   };
 }
-

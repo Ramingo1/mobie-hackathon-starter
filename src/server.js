@@ -6,6 +6,7 @@ import { timingSafeEqual, randomUUID } from 'node:crypto';
 import { createMobieClient } from './mobie.js';
 import { createMapboxClient } from './mapbox.js';
 import { createAustrianAddressMatcher } from './austrian-addresses.js';
+import { createPlaceMatcher } from './places.js';
 import { HttpError } from './http.js';
 import { loadConfig } from './config.js';
 import { createBackendCallLog } from './call-log.js';
@@ -56,7 +57,8 @@ async function readJson(req, limit = 16_384) {
 export function createServer(config, services = {}) {
   const mobie = services.mobie ?? createMobieClient({ baseUrl: config.baseUrl, secret: config.secret });
   const addressMatcher = services.addressMatcher ?? createAustrianAddressMatcher();
-  const mapbox = services.mapbox ?? createMapboxClient({ token: config.mapboxToken, addressMatcher });
+  const placeMatcher = services.placeMatcher ?? createPlaceMatcher({ endpoint: config.photonUrl });
+  const mapbox = services.mapbox ?? createMapboxClient({ token: config.mapboxToken, addressMatcher, placeMatcher });
   const calls = services.calls ?? createBackendCallLog({ baseUrl: config.baseUrl, secret: config.secret, apiKey: config.apiKey });
 
   const server = httpServer(async (req, res) => {
@@ -168,4 +170,3 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     process.exitCode = 1;
   }
 }
-

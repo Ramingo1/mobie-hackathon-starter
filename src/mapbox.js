@@ -1,6 +1,7 @@
 import { HttpError, requestJson } from './http.js';
+import { parseAddress } from './austrian-addresses.js';
 
-export function createMapboxClient({ token, fetch = globalThis.fetch, addressMatcher }) {
+export function createMapboxClient({ token, fetch = globalThis.fetch, addressMatcher, placeMatcher }) {
   return {
     async searchLocations(query) {
       if (typeof query !== 'string' || !query.trim() || query.length > 256 || query.includes(';') || query.trim().split(/\s+/).length > 20) {
@@ -8,7 +9,17 @@ export function createMapboxClient({ token, fetch = globalThis.fetch, addressMat
       }
       // Prefer canonical Austrian register data and coordinates. This path does not require a Mapbox token.
       if (addressMatcher?.searchLocations) {
-        return addressMatcher.searchLocations(query.trim());
+        const parsed = parseAddress(query.trim());
+        // Landmark names are not streets. Avoid the street-directory round trip for
+        // them; ordinary street/house-number searches retain their existing path.
+        const looksLikeStreet = parsed && (parsed.houseNumber || /(?:straße|strasse|str\.|gasse|platz|weg|allee|ring|kai|zeile|promenade)$/iu.test(parsed.street));
+        if (placeMatcher && parsed && !looksLikeStreet) {
+          const places = await placeMatcher.searchLocations(query.trim());
+          if (places.candidates.length) return places;
+        }
+        const addresses = await addressMatcher.searchLocations(query.trim());
+        if (addresses.candidates.length || !placeMatcher || !parsed || parsed.houseNumber || !looksLikeStreet) return addresses;
+        return placeMatcher.searchLocations(query.trim());
       }
       if (!token) throw new HttpError(503, 'Set your own MAPBOX_ACCESS_TOKEN in .env to use geocoding.');
       // The BEV-derived street directory helps correct transcription errors before geocoding.
@@ -45,4 +56,3 @@ export function createMapboxClient({ token, fetch = globalThis.fetch, addressMat
     },
   };
 }
-

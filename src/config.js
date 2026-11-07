@@ -14,8 +14,13 @@ export function loadConfig(env = process.env) {
   if (apiKey.length < 32) throw new Error('STARTER_API_KEY must have at least 32 characters. Generate one with npm run setup.');
   const secret = required('VOICE_INTEGRATION_SECRET');
   if (!/^[\x21-\x7e]{32,}$/.test(secret)) throw new Error('VOICE_INTEGRATION_SECRET must be the organizer-issued team secret (at least 32 printable characters, without spaces).');
+  const photonUrl = env.PHOTON_URL?.trim() || 'https://photon.komoot.io/api/';
+  const photon = new URL(photonUrl);
+  if (photon.protocol !== 'https:' || photon.username || photon.password || photon.search || photon.hash) {
+    throw new Error('PHOTON_URL must be an HTTPS endpoint without credentials, query or fragment.');
+  }
   return {
     baseUrl: base.origin, secret, apiKey, mapboxToken: env.MAPBOX_ACCESS_TOKEN?.trim() || '',
-    port, host: env.HOST || '127.0.0.1',
+    photonUrl, port, host: env.HOST || '127.0.0.1',
   };
 }
