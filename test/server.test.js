@@ -76,6 +76,44 @@ test('real HTTP forwards caller context with the upstream team credential, witho
   assert.doesNotMatch(await page.text(), /private-upstream|Auth0|Sign in/);
 });
 
+test('Vapi web calls use native call ID and omit an unresolved optional caller number', async t => {
+  const { url, seen } = await fixture(t);
+  for (const callType of ['webCall', 'web']) {
+    const response = await fetch(`${url}/api/rides/search`, {
+      method: 'POST', headers: {
+        Authorization: `Bearer ${key}`, 'Content-Type': 'application/json',
+        'X-Call-Id': `vapi-${callType}`, 'X-Mobie-Call-Id': '{{call.id}}',
+        'X-Mobie-Call-Type': callType, 'X-Mobie-Caller-Phone': '{{customer.number}}',
+      }, body: JSON.stringify(payload),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(seen.at(-1).headers['x-mobie-call-id'], `vapi-${callType}`);
+    assert.equal(seen.at(-1).headers['x-mobie-call-type'], 'webCall');
+    assert.equal(seen.at(-1).headers['x-mobie-caller-phone'], undefined);
+  }
+});
+
+test('provider fallback cannot turn phone calls, missing types or invalid callers into web tests', async t => {
+  const { url, seen } = await fixture(t);
+  for (const extra of [
+    { 'X-Mobie-Call-Type': 'inboundPhoneCall', 'X-Mobie-Caller-Phone': '{{customer.number}}' },
+    { 'X-Mobie-Caller-Phone': '{{customer.number}}' },
+    { 'X-Mobie-Call-Type': '{{call.type}}', 'X-Mobie-Caller-Phone': '{{customer.number}}' },
+    { 'X-Mobie-Call-Type': 'webCall', 'X-Mobie-Caller-Phone': 'private' },
+    { 'X-Mobie-Call-Type': 'webCall', 'X-Mobie-Call-Id': 'invalid id' },
+  ]) {
+    const response = await fetch(`${url}/api/caller`, { headers: {
+      Authorization: `Bearer ${key}`, 'X-Call-Id': 'real-provider-call', ...extra,
+    } });
+    assert.equal(response.status, 400);
+  }
+  assert.equal(seen.length, 0);
+  const unauthenticated = await fetch(`${url}/api/caller`, { headers: {
+    'X-Call-Id': 'real-provider-call', 'X-Mobie-Call-Type': 'webCall',
+  } });
+  assert.equal(unauthenticated.status, 401);
+});
+
 test('removed login/session/driver routes are unavailable and cannot proxy arbitrary URLs', async t => {
   const { url, seen } = await fixture(t);
   for (const path of ['/auth/login', '/callback?code=unused', '/api/logout', '/api/status', '/api/me', '/api/rides/ride-1', '/api/admin/users', '/api/https://example.com']) {
@@ -263,3 +301,4 @@ test('logging failure never changes a submitted booking, while final reports ret
   assert.ok(errors.length > 0);
   assert.doesNotMatch(errors.join(' '), new RegExp(secret));
 });
+
