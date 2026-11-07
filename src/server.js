@@ -20,6 +20,23 @@ function equalSecret(actual, expected) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+// These values come only from authenticated provider headers, never tool arguments.
+// Vapi sends X-Call-Id automatically; optional unset Liquid values can remain literal.
+function providerContext(headers) {
+  const isTemplate = value => typeof value === 'string' && /^\s*\{\{[^{}]+\}\}\s*$/.test(value);
+  const configuredId = headers['x-mobie-call-id'];
+  const callId = configuredId === undefined || isTemplate(configuredId) ? headers['x-call-id'] : configuredId;
+  const rawType = headers['x-mobie-call-type'];
+  const callType = rawType === 'web' ? 'webCall' : rawType;
+  const rawPhone = headers['x-mobie-caller-phone'];
+  const missingCustomer = typeof rawPhone === 'string' &&
+    /^\s*\{\{\s*customer\.number(?:\s*\|\s*default:\s*(['"])\1)?\s*\}\}\s*$/.test(rawPhone);
+  return {
+    phone: callType === 'webCall' && missingCustomer ? undefined : rawPhone,
+    callId, callType, idempotencyKey: headers['idempotency-key'],
+  };
+}
+
 async function readJson(req, limit = 16_384) {
   if (!req.headers['content-type']?.toLowerCase().startsWith('application/json')) throw new HttpError(415, 'Use Content-Type: application/json.');
   const chunks = [];
@@ -83,10 +100,7 @@ export function createServer(config, services = {}) {
         return res.end();
       }
       // The authenticated provider adapter supplies these from call metadata, never model arguments.
-      const context = {
-        phone: req.headers['x-mobie-caller-phone'], callId: req.headers['x-mobie-call-id'],
-        callType: req.headers['x-mobie-call-type'], idempotencyKey: req.headers['idempotency-key'],
-      };
+      const context = providerContext(req.headers);
       const toolId = req.headers['x-mobie-tool-call-id'];
       if (toolId !== undefined && !/^[A-Za-z0-9_-]{1,128}$/.test(toolId)) throw new HttpError(400, 'Invalid X-Mobie-Tool-Call-Id.');
       const run = async (name, action, args = {}) => {
@@ -154,3 +168,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     process.exitCode = 1;
   }
 }
+
