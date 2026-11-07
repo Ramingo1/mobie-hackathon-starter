@@ -1,4 +1,4 @@
-import { requestJson } from './http.js';
+import { HttpError, requestJson } from './http.js';
 
 const STATES = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 const POSTCODE_STATES = {
@@ -16,11 +16,26 @@ const ATTRIBUTION = '© Österreichisches Adressregister, Datenquelle geocode.at
 
 function normalize(value) {
   return String(value ?? '')
+    .replace(/str\.(?=\s|$)/giu, 'straße')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/ß/gi, 'ss')
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '');
+}
+
+// Compare likely transcription variants, while always returning the register's spelling.
+function spokenKey(value) {
+  return normalize(value).replace(/ae/g, 'a').replace(/oe/g, 'o').replace(/ue/g, 'u')
+    .replace(/([aeiou])h/g, '$1').replace(/ph/g, 'f').replace(/th/g, 't')
+    .replace(/dt/g, 't').replace(/(.)\1+/g, '$1');
+}
+
+function coordinates(longitude, latitude) {
+  if (longitude == null || latitude == null || longitude === '' || latitude === '') return null;
+  const lng = Number(longitude), lat = Number(latitude);
+  return Number.isFinite(lng) && Number.isFinite(lat) && lng >= 9 && lng <= 18 && lat >= 46 && lat <= 50
+    ? { longitude: lng, latitude: lat } : null;
 }
 
 function parseAddress(query) {
@@ -88,27 +103,36 @@ export function createAustrianAddressMatcher({ fetch = globalThis.fetch } = {}) 
           const result = await getJson(url.toString());
           const names = Array.isArray(result) ? result : [result];
           return names.some(name => normalize(name) === normalize(city)) ? state : null;
-        } catch {
-          return null;
+        } catch (error) {
+          return { error };
         }
-      })).then(results => results.filter(Boolean)));
+      })).then(results => {
+        const found = results.filter(value => typeof value === 'string');
+        if (!found.length) {
+          cityStateCache.delete(key);
+          const failed = results.find(value => value?.error);
+          if (failed) throw failed.error;
+        }
+        return found;
+      }).catch(error => { cityStateCache.delete(key); throw error; }));
     }
     return cityStateCache.get(key);
   }
 
-  async function streetsForState(state) {
-    if (!streetCatalogCache.has(state)) {
+  async function streetsForState(state, city) {
+    const key = `${state}:${normalize(city)}`;
+    if (!streetCatalogCache.has(key)) {
       const url = new URL('https://www.geocode.at/list');
-      url.search = new URLSearchParams({ state }).toString();
-      streetCatalogCache.set(state, getJson(url.toString()).then(rows => {
+      url.search = new URLSearchParams({ state, city }).toString();
+      streetCatalogCache.set(key, getJson(url.toString()).then(rows => {
         if (!Array.isArray(rows)) throw new Error('Unexpected Austrian street directory response.');
         return rows.filter(row => typeof row?.Place === 'string' && typeof row?.Street === 'string');
       }).catch(error => {
-        streetCatalogCache.delete(state);
+        streetCatalogCache.delete(key);
         throw error;
       }));
     }
-    return streetCatalogCache.get(state);
+    return streetCatalogCache.get(key);
   }
 
   async function autocomplete(params) {
@@ -123,7 +147,7 @@ export function createAustrianAddressMatcher({ fetch = globalThis.fetch } = {}) 
       if (!parsed) return [];
       const states = await statesForCity(parsed.city, parsed.postcode);
       if (!states.length) return [];
-      const catalogs = await Promise.all(states.map(streetsForState));
+      const catalogs = await Promise.all(states.map(state => streetsForState(state, parsed.city)));
       const cityKey = normalize(parsed.city);
       const streetKey = normalize(parsed.street);
       const matches = [];
@@ -135,7 +159,11 @@ export function createAustrianAddressMatcher({ fetch = globalThis.fetch } = {}) 
           const maxLength = Math.max(streetKey.length, candidateKey.length);
           const similarity = maxLength ? 1 - distance / maxLength : 0;
           const allowedDistance = Math.max(1, Math.floor(streetKey.length * 0.2));
-          if (distance > allowedDistance || similarity < 0.78) continue;
+          const spokenLeft = spokenKey(parsed.street), spokenRight = spokenKey(row.Street);
+          const spokenDistance = editDistance(spokenLeft, spokenRight);
+          const spokenSimilarity = 1 - spokenDistance / Math.max(spokenLeft.length, spokenRight.length, 1);
+          if ((distance > allowedDistance || similarity < 0.78)
+            && (spokenLeft.length < 6 || spokenDistance > 2 || spokenSimilarity < 0.85)) continue;
           const location = [parsed.postcode, row.Place].filter(Boolean).join(' ');
           const address = [row.Street, parsed.houseNumber].filter(Boolean).join(' ');
           matches.push({
@@ -152,8 +180,14 @@ export function createAustrianAddressMatcher({ fetch = globalThis.fetch } = {}) 
       }
       matches.sort((a, b) => a.distance - b.distance || a.street.localeCompare(b.street, 'de'));
       const bestDistance = matches[0]?.distance;
+      const seen = new Set();
       return matches
         .filter(match => match.distance <= bestDistance + 1)
+        .filter(match => {
+          const key = `${match.state}:${match.city}:${match.street}`;
+          if (seen.has(key)) return false;
+          seen.add(key); return true;
+        })
         .slice(0, 3);
   }
 
@@ -163,6 +197,42 @@ export function createAustrianAddressMatcher({ fetch = globalThis.fetch } = {}) 
     async searchLocations(query) {
       const matches = await suggestQueries(query);
       const candidates = [];
+      const candidate = (match, houseNumber, point) => {
+        const address = [match.street, houseNumber].filter(Boolean).join(' ');
+        return {
+          publicName: address,
+          addressLine: `${address}, ${[match.postcode, match.city].filter(Boolean).join(' ')}`,
+          ...point,
+          street: match.street,
+          houseNumber,
+          city: match.city,
+          postcode: match.postcode || null,
+          matchType: match.distance ? 'similar-street' : 'exact-street',
+          houseNumberSuggested: !match.houseNumber || houseNumber !== match.houseNumber,
+          requiresConfirmation: true,
+        };
+      };
+      // /geocode requires a house number. The street dictionary returns actual
+      // registered numbers with coordinates; never fabricate a default number.
+      const streetSuggestions = async match => {
+        const url = new URL('https://www.geocode.at/dictionary');
+        url.search = new URLSearchParams({ state: match.state, city: match.city, street: match.street,
+          ...(match.postcode ? { zip: match.postcode } : {}),
+        }).toString();
+        const result = await getJson(url.toString());
+        if (!result || typeof result !== 'object' || Array.isArray(result)) {
+          throw new HttpError(502, 'Unexpected Austrian address dictionary response.');
+        }
+        const cityEntry = Object.entries(result).find(([city]) => normalize(city) === normalize(match.city))?.[1];
+        const numbers = cityEntry && Object.entries(cityEntry).find(([street]) => normalize(street) === normalize(match.street))?.[1];
+        return Object.entries(numbers ?? {})
+          .sort(([a], [b]) => a.localeCompare(b, 'de', { numeric: true }))
+          .flatMap(([number, point]) => {
+            if (!/^\d+[a-z]?(?:\/\d+[a-z]?)?$/iu.test(number) || !Array.isArray(point)) return [];
+            const valid = coordinates(point[0], point[1]);
+            return valid ? [candidate(match, number, valid)] : [];
+          }).slice(0, 3);
+      };
       const geocode = async (match, houseNumber) => {
         const url = new URL('https://www.geocode.at/geocode');
         url.search = new URLSearchParams({
@@ -174,16 +244,8 @@ export function createAustrianAddressMatcher({ fetch = globalThis.fetch } = {}) 
         const result = await getJson(url.toString());
         const rows = Array.isArray(result) ? result : [result];
         return rows.flatMap(row => {
-          const longitude = Number(row?.lng);
-          const latitude = Number(row?.lat);
-          if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return [];
-          const address = [match.street, houseNumber].filter(Boolean).join(' ');
-          return [{
-            publicName: address,
-            addressLine: `${address}, ${[match.postcode, match.city].filter(Boolean).join(' ')}`,
-            longitude,
-            latitude,
-          }];
+          const point = coordinates(row?.lng, row?.lat);
+          return point ? [candidate(match, houseNumber, point)] : [];
         });
       };
 
@@ -211,6 +273,10 @@ export function createAustrianAddressMatcher({ fetch = globalThis.fetch } = {}) 
 
       for (const match of matches) {
         if (!match.state) continue;
+        if (!match.houseNumber) {
+          candidates.push(...await streetSuggestions(match));
+          continue;
+        }
         try {
           const exact = await geocode(match, match.houseNumber);
           candidates.push(...exact);
@@ -220,7 +286,8 @@ export function createAustrianAddressMatcher({ fetch = globalThis.fetch } = {}) 
               try { candidates.push(...await geocode(match, houseNumber)); } catch { /* Skip invalid alternatives. */ }
             }
           }
-        } catch {
+        } catch (error) {
+          if (![400, 404].includes(error.status)) throw error;
           // An invalid house number can still have nearby registered alternatives.
           if (match.houseNumber) {
             const alternatives = await nearbyHouseNumbers(match);
@@ -230,7 +297,8 @@ export function createAustrianAddressMatcher({ fetch = globalThis.fetch } = {}) 
           }
         }
       }
-      return { candidates, attribution: ATTRIBUTION };
+      const unique = new Map(candidates.map(item => [item.addressLine, item]));
+      return { candidates: [...unique.values()].slice(0, 9), attribution: ATTRIBUTION };
     },
   };
 }
